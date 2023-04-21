@@ -1,6 +1,10 @@
 {
   "name": "local-comments",
   "displayName": "Local Comments",
+  "repository": {
+    "type": "git",
+    "url": " https://github.com/marcelrsoub/local-comments.git"
+  },
   "description": "Store comments on code locally instead of in the repo.",
   "version": "0.0.1",
   "engines": {
