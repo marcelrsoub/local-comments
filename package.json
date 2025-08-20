@@ -7,7 +7,8 @@
   },
   "publisher": "marcel-rsoub",
   "description": "Store comments on code locally instead of in the repo.",
-  "version": "0.0.4",
+  "version": "1.0.0",
+  "license": "MIT",
   "engines": {
     "vscode": "^1.77.0"
   },
@@ -18,13 +19,166 @@
     "onStartupFinished"
   ],
   "main": "./dist/extension.js",
+  "icon": "icon.png",
   "contributes": {
     "commands": [
       {
         "command": "local-comments.openCommentInput",
-        "title": "Open Comment Input"
+        "title": "Local Comments: Add Comment"
+      },
+      {
+        "command": "local-comments.saveComments",
+        "title": "Local Comments: Save Comments"
+      },
+      {
+        "command": "local-comments.openSettings",
+        "title": "Local Comments: Open Settings",
+        "icon": "$(gear)"
+      },
+      {
+        "command": "local-comments.openSidebar",
+        "title": "Local Comments: Open Sidebar"
+      },
+      {
+        "command": "local-comments.navigateToComment",
+        "title": "Go to Comment"
+      },
+      {
+        "command": "local-comments.editComment",
+        "title": "Edit Comment",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "local-comments.deleteComment",
+        "title": "Delete Comment",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "local-comments.refreshComments",
+        "title": "Refresh Comments",
+        "icon": "$(refresh)"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "Local Comments",
+      "properties": {
+        "localComments.saveLocation": {
+          "type": "string",
+          "default": "home",
+          "enum": ["home", "workspace", "custom"],
+          "enumDescriptions": [
+            "Save to user's home directory",
+            "Save to workspace root directory",
+            "Save to a custom specified path"
+          ],
+          "description": "Choose where to save the comments JSON file"
+        },
+        "localComments.customFilePath": {
+          "type": "string",
+          "default": "",
+          "description": "Custom file path when 'custom' save location is selected"
+        },
+        "localComments.fileName": {
+          "type": "string",
+          "default": "local-comments.json",
+          "description": "Name of the comments file"
+        },
+        "localComments.highlightColor": {
+          "type": "string",
+          "default": "rgba(255, 255, 0, 0.3)",
+          "description": "Background color for lines with comments (CSS color format)"
+        },
+        "localComments.showStatusBarButton": {
+          "type": "boolean",
+          "icon":"media/icon.png",
+          "default": true,
+          "description": "Show the comment button in the status bar"
+        },
+        "localComments.statusBarButtonText": {
+          "type": "string",
+          "default": "💭",
+          "description": "Text/emoji/icon to display on the status bar button (use 💭 for emoji)"
+        },
+        "localComments.autoSave": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically save comments when they are added or modified"
+        },
+        "localComments.showNotifications": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show notification messages when saving comments"
+        },
+        "localComments.backupEnabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Create backup files before overwriting existing comments file"
+        },
+        "localComments.hideStaleComments": {
+          "type": "boolean",
+          "default": true,
+          "description": "Hide comment highlights when the original text no longer matches the current file content"
+        }
+      }
+    },
+    "keybindings": [
+      {
+        "command": "local-comments.openCommentInput",
+        "key": "alt+c",
+        "when": "editorTextFocus"
+      }
+    ],
+    "views": {
+      "local-comments-sidebar": [
+        {
+          "id": "localComments",
+          "name": "Local Comments",
+          "type": "webview",
+          "when": "true"
+        }
+      ]
+    },
+    "viewsContainers": {
+      "panel": [
+        {
+          "id": "local-comments-sidebar",
+          "title": "Local Comments",
+          "icon":"media/icon.png"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "localComments",
+        "contents": "No comments found in this workspace.\n\nTo add a comment, press Alt+C (⌥+C on Mac) while in an editor.\n\n[Add Comment](command:local-comments.openCommentInput)\n\n[Open Settings](command:local-comments.openSettings)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "local-comments.refreshComments",
+          "when": "view == localComments",
+          "group": "navigation"
+        },
+        {
+          "command": "local-comments.openSettings",
+          "when": "view == localComments",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "local-comments.editComment",
+          "when": "view == localComments && viewItem == comment",
+          "group": "inline"
+        },
+        {
+          "command": "local-comments.deleteComment",
+          "when": "view == localComments && viewItem == comment",
+          "group": "inline"
+        }
+      ]
+    }
   },
   "scripts": {
     "vscode:prepublish": "yarn run package",
