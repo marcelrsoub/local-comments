@@ -966,30 +966,35 @@ async function deleteCommentFromTree(item: CommentTreeItem) {
 }
 
 async function deleteCommentById(commentId: string, fileName: string) {
-    const result = await vscode.window.showWarningMessage(
-        'Are you sure you want to delete this comment?',
-        'Delete', 'Cancel'
-    );
-    
-    if (result === 'Delete') {
-        const fileComments = commentData[fileName];
-        if (fileComments) {
-            const index = fileComments.findIndex(c => c.id === commentId);
-            if (index !== -1) {
-                fileComments.splice(index, 1);
-                if (fileComments.length === 0) {
-                    delete commentData[fileName];
-                }
-                
-                updateDecorations();
-                const config = vscode.workspace.getConfiguration('localComments');
-                const autoSave = config.get<boolean>('autoSave', true);
-                if (autoSave) {
-                    saveComments();
-                }
-                
-                refreshSidebar();
+    const config = vscode.workspace.getConfiguration('localComments');
+    const confirmDelete = config.get<boolean>('confirmDelete', true);
+
+    if (confirmDelete) {
+        const result = await vscode.window.showWarningMessage(
+            'Are you sure you want to delete this comment?',
+            'Delete', 'Cancel'
+        );
+        if (result !== 'Delete') {
+            return;
+        }
+    }
+
+    const fileComments = commentData[fileName];
+    if (fileComments) {
+        const index = fileComments.findIndex(c => c.id === commentId);
+        if (index !== -1) {
+            fileComments.splice(index, 1);
+            if (fileComments.length === 0) {
+                delete commentData[fileName];
             }
+
+            updateDecorations();
+            const autoSave = config.get<boolean>('autoSave', true);
+            if (autoSave) {
+                saveComments();
+            }
+
+            refreshSidebar();
         }
     }
 }

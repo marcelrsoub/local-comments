@@ -118,6 +118,11 @@
           "type": "boolean",
           "default": true,
           "description": "Hide comment highlights when the original text no longer matches the current file content"
+        },
+        "localComments.confirmDelete": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show a confirmation dialog before deleting comments. Set to false for immediate deletion."
         }
       }
     },
