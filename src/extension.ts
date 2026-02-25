@@ -22,7 +22,15 @@ interface CommentData {
     [fileName: string]: Comment[];
 }
 
+interface PendingComment {
+    fileName: string;
+    range: CommentRange;
+    existingCommentId?: string;
+    existingText?: string;
+}
+
 const commentData: CommentData = {};
+let pendingComment: PendingComment | undefined = undefined;
 
 function getCommentFilePath(): string {
     const config = vscode.workspace.getConfiguration('localComments');
@@ -284,93 +292,97 @@ function openCommentInput() {
     
     const selection = activeEditor.selection;
     const fileName = activeEditor.document.fileName;
-    const config = vscode.workspace.getConfiguration('localComments');
-    const autoSave = config.get<boolean>('autoSave', true);
     
-    // Determine the range to comment on
     let range: vscode.Range;
     let selectedText: string | undefined;
-    let promptText: string;
-    let isLineComment: boolean;
     
     if (selection.isEmpty) {
-        // No selection - line-only comment (original behavior)
         const line = activeEditor.document.lineAt(selection.active.line);
         range = new vscode.Range(line.range.start, line.range.end);
-        selectedText = undefined; // Don't store text for line comments
-        promptText = `Comment for line ${selection.active.line + 1}`;
-        isLineComment = true;
+        selectedText = undefined;
     } else {
-        // Text is selected - text span comment
         range = new vscode.Range(selection.start, selection.end);
         selectedText = activeEditor.document.getText(selection);
-        const startLine = selection.start.line + 1;
-        const endLine = selection.end.line + 1;
-        if (startLine === endLine) {
-            promptText = `Comment for selected text on line ${startLine}`;
-        } else {
-            promptText = `Comment for selected text (lines ${startLine}-${endLine})`;
-        }
-        isLineComment = false;
     }
     
-    // Check for existing comment on this range
     const existingComment = findExistingCommentForRange(fileName, range);
-    const existingCommentText = existingComment?.text || '';
     
-    vscode.window.showInputBox({
-        value: existingCommentText,
-        prompt: promptText,
-        placeHolder: isLineComment ? `Line ${range.start.line + 1}` : (selectedText && selectedText.length > 50 ? selectedText.substring(0, 50) + '...' : selectedText)
-    }).then((comment) => {
-        if (comment !== undefined) {
-            if (comment.trim() === '') {
-                // Delete comment if empty
-                if (existingComment) {
-                    const fileComments = commentData[fileName];
-                    const index = fileComments.findIndex(c => c.id === existingComment.id);
-                    if (index !== -1) {
-                        fileComments.splice(index, 1);
-                        // Clean up empty file entries
-                        if (fileComments.length === 0) {
-                            delete commentData[fileName];
-                        }
-                    }
-                }
-            } else {
-                // Add or update comment
-                commentData[fileName] = commentData[fileName] || [];
-                
-                if (existingComment) {
-                    // Update existing comment
-                    existingComment.text = comment;
-                    if (selectedText !== undefined) {
-                        existingComment.range.selectedText = selectedText; // Update selected text for span comments
-                    }
-                } else {
-                    // Create new comment
-                    const newComment: Comment = {
-                        id: generateCommentId(),
-                        text: comment,
-                        timestamp: Date.now(),
-                        range: {
-                            startLine: range.start.line,
-                            startCharacter: range.start.character,
-                            endLine: range.end.line,
-                            endCharacter: range.end.character,
-                            selectedText: selectedText // Only set for text span comments
-                        }
-                    };
-                    commentData[fileName].push(newComment);
+    pendingComment = {
+        fileName,
+        range: {
+            startLine: range.start.line,
+            startCharacter: range.start.character,
+            endLine: range.end.line,
+            endCharacter: range.end.character,
+            selectedText
+        },
+        existingCommentId: existingComment?.id,
+        existingText: existingComment?.text
+    };
+    
+    refreshSidebar();
+    vscode.commands.executeCommand('localComments.focus');
+}
+
+function savePendingComment(text: string) {
+    if (!pendingComment) {
+        return;
+    }
+    
+    const config = vscode.workspace.getConfiguration('localComments');
+    const autoSave = config.get<boolean>('autoSave', true);
+    const { fileName, range, existingCommentId } = pendingComment;
+    
+    if (text.trim() === '') {
+        if (existingCommentId) {
+            const fileComments = commentData[fileName];
+            const index = fileComments?.findIndex(c => c.id === existingCommentId);
+            if (index !== undefined && index !== -1) {
+                fileComments.splice(index, 1);
+                if (fileComments.length === 0) {
+                    delete commentData[fileName];
                 }
             }
-            updateDecorations();
-            if (autoSave) {
-                saveComments();
-            }
-            refreshSidebar();
         }
-    });
+    } else {
+        commentData[fileName] = commentData[fileName] || [];
+        
+        if (existingCommentId) {
+            const existing = commentData[fileName].find(c => c.id === existingCommentId);
+            if (existing) {
+                existing.text = text;
+                if (range.selectedText !== undefined) {
+                    existing.range.selectedText = range.selectedText;
+                }
+            }
+        } else {
+            const newComment: Comment = {
+                id: generateCommentId(),
+                text: text,
+                timestamp: Date.now(),
+                range: {
+                    startLine: range.startLine,
+                    startCharacter: range.startCharacter,
+                    endLine: range.endLine,
+                    endCharacter: range.endCharacter,
+                    selectedText: range.selectedText
+                }
+            };
+            commentData[fileName].push(newComment);
+        }
+    }
+    
+    pendingComment = undefined;
+    updateDecorations();
+    if (autoSave) {
+        saveComments();
+    }
+    refreshSidebar();
+}
+
+function cancelPendingComment() {
+    pendingComment = undefined;
+    refreshSidebar();
 }
 
 function openSettings() {
@@ -474,8 +486,9 @@ class CommentsTreeDataProvider implements vscode.TreeDataProvider<CommentTreeIte
 const commentsTreeDataProvider = new CommentsTreeDataProvider();
 
 let sidebarWebview: vscode.WebviewView | undefined = undefined;
+let extensionContext: vscode.ExtensionContext | undefined = undefined;
 
-function createSidebarHTML(): string {
+function createSidebarHTML(showHint: boolean = true): string {
     const allComments: Array<{fileName: string, comment: Comment}> = [];
     
     // Collect all comments from all files
@@ -532,7 +545,6 @@ function createSidebarHTML(): string {
             comment.range.selectedText.substring(0, 50) + (comment.range.selectedText.length > 50 ? '...' : '') :
             `Line ${lineNumber}`;
         
-        // Properly escape ALL HTML characters to prevent broken structure
         const escapeHtml = (str: string) => {
             return str.replace(/&/g, '&amp;')
                      .replace(/</g, '&lt;')
@@ -541,12 +553,64 @@ function createSidebarHTML(): string {
                      .replace(/'/g, '&#39;');
         };
         
+        const escapeJsString = (str: string) => {
+            return str.replace(/\\/g, '\\\\')
+                     .replace(/'/g, "\\'")
+                     .replace(/"/g, '\\"')
+                     .replace(/\n/g, '\\n')
+                     .replace(/\r/g, '\\r');
+        };
+        
         const escapedText = escapeHtml(comment.text);
         const escapedSnippet = escapeHtml(codeSnippet);
         const escapedPath = escapeHtml(relativePath);
+        const escapedFileName = escapeJsString(fileName);
+        const escapedCommentId = escapeJsString(comment.id);
         
-        return `<div class="comment-item comment-${index}" data-comment-id="${comment.id}" data-file="${fileName}" onclick="navigateToComment('${fileName}', ${comment.range.startLine}, ${comment.range.startCharacter})"><div class="comment-header"><span class="file-name">${escapedPath}:${lineNumber}</span><span class="timestamp">${timestamp}</span></div><div class="comment-text">${escapedText}</div><div class="code-snippet">${escapedSnippet}</div><div class="comment-actions"><button onclick="editComment(event, '${comment.id}', '${fileName}')">Edit</button><button onclick="deleteComment(event, '${comment.id}', '${fileName}')">Delete</button></div></div>`;
+        return `<div class="comment-item comment-${index}" data-comment-id="${comment.id}" data-file="${fileName}" onclick="navigateToComment('${escapedFileName}', ${comment.range.startLine}, ${comment.range.startCharacter})"><div class="comment-header"><span class="file-name">${escapedPath}:${lineNumber}</span><span class="timestamp">${timestamp}</span></div><div class="comment-text">${escapedText}</div><div class="code-snippet">${escapedSnippet}</div><div class="comment-actions"><button onclick="editComment(event, '${escapedCommentId}', '${escapedFileName}')">Edit</button><button onclick="deleteComment(event, '${escapedCommentId}', '${escapedFileName}')">Delete</button></div></div>`;
     }).join('\n');
+    
+    let editorHTML = '';
+    if (pendingComment) {
+        const relativePath = vscode.workspace.asRelativePath(pendingComment.fileName);
+        const lineNumber = pendingComment.range.startLine + 1;
+        const codeSnippet = pendingComment.range.selectedText ? 
+            pendingComment.range.selectedText.substring(0, 100) + (pendingComment.range.selectedText.length > 100 ? '...' : '') :
+            undefined;
+        
+        const escapeHtml = (str: string) => {
+            return str.replace(/&/g, '&amp;')
+                     .replace(/</g, '&lt;')
+                     .replace(/>/g, '&gt;')
+                     .replace(/"/g, '&quot;')
+                     .replace(/'/g, '&#39;');
+        };
+        
+        const escapeJsString = (str: string) => {
+            return str.replace(/\\/g, '\\\\')
+                     .replace(/'/g, "\\'")
+                     .replace(/"/g, '\\"')
+                     .replace(/\n/g, '\\n')
+                     .replace(/\r/g, '\\r');
+        };
+        
+        const escapedPath = escapeHtml(relativePath);
+        const escapedSnippet = codeSnippet ? escapeHtml(codeSnippet) : '';
+        const escapedExistingText = pendingComment.existingText ? escapeJsString(pendingComment.existingText) : '';
+        
+        editorHTML = `<div class="comment-editor">
+            <div class="editor-header">
+                <span class="file-info">${escapedPath}:${lineNumber}</span>
+                <button class="close-btn" onclick="cancelComment()" title="Cancel">×</button>
+            </div>
+            ${codeSnippet ? `<div class="editor-code-preview">${escapedSnippet}</div>` : ''}
+            <textarea id="commentText" placeholder="Enter your comment...">${escapedExistingText}</textarea>
+            <div class="editor-actions">
+                <button class="save-btn" onclick="saveComment()">Save</button>
+                <button class="cancel-btn" onclick="cancelComment()">Cancel</button>
+            </div>
+        </div>`;
+    }
     
     return `
         <!DOCTYPE html>
@@ -580,6 +644,25 @@ function createSidebarHTML(): string {
                     font-size: 0.95em;
                     color: var(--vscode-foreground);
                     text-align: center;
+                    position: relative;
+                }
+                
+                .dismiss-hint {
+                    position: absolute;
+                    top: 4px;
+                    right: 8px;
+                    background: none;
+                    border: none;
+                    color: var(--vscode-descriptionForeground);
+                    cursor: pointer;
+                    font-size: 16px;
+                    padding: 0;
+                    line-height: 1;
+                    opacity: 0.6;
+                }
+                
+                .dismiss-hint:hover {
+                    opacity: 1;
                 }
                 
                 .keybinding {
@@ -635,6 +718,8 @@ function createSidebarHTML(): string {
                 .comment-text {
                     margin-bottom: 8px;
                     font-weight: 500;
+                    white-space: pre-wrap;
+                    word-break: break-word;
                 }
                 
                 .code-snippet {
@@ -725,6 +810,120 @@ function createSidebarHTML(): string {
                     color: var(--vscode-editor-findMatchForeground);
                 }
                 
+                .comment-editor {
+                    border: 2px solid var(--vscode-button-background);
+                    border-radius: 8px;
+                    padding: 12px;
+                    margin-bottom: 15px;
+                    background: var(--vscode-editor-background);
+                    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+                }
+                
+                .editor-header {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    margin-bottom: 10px;
+                    padding-bottom: 8px;
+                    border-bottom: 1px solid var(--vscode-panel-border);
+                }
+                
+                .editor-header .file-info {
+                    font-weight: bold;
+                    color: var(--vscode-textLink-foreground);
+                    font-size: 0.9em;
+                }
+                
+                .editor-header .close-btn {
+                    background: none;
+                    border: none;
+                    color: var(--vscode-descriptionForeground);
+                    cursor: pointer;
+                    font-size: 18px;
+                    padding: 0;
+                    line-height: 1;
+                    opacity: 0.7;
+                }
+                
+                .editor-header .close-btn:hover {
+                    opacity: 1;
+                    color: var(--vscode-foreground);
+                }
+                
+                .editor-code-preview {
+                    background-color: var(--vscode-textCodeBlock-background);
+                    border: 1px solid var(--vscode-panel-border);
+                    border-radius: 4px;
+                    padding: 8px 10px;
+                    margin-bottom: 10px;
+                    font-family: var(--vscode-editor-font-family);
+                    font-size: 0.85em;
+                    color: var(--vscode-editor-foreground);
+                    max-height: 80px;
+                    overflow: hidden;
+                    white-space: pre-wrap;
+                    word-break: break-all;
+                }
+                
+                .comment-editor textarea {
+                    width: 100%;
+                    min-height: 100px;
+                    resize: vertical;
+                    font-family: var(--vscode-font-family);
+                    font-size: var(--vscode-font-size);
+                    padding: 10px;
+                    border: 1px solid var(--vscode-input-border);
+                    border-radius: 4px;
+                    background-color: var(--vscode-input-background);
+                    color: var(--vscode-input-foreground);
+                    box-sizing: border-box;
+                    margin-bottom: 10px;
+                }
+                
+                .comment-editor textarea:focus {
+                    outline: 1px solid var(--vscode-focusBorder);
+                    border-color: var(--vscode-focusBorder);
+                }
+                
+                .comment-editor textarea::placeholder {
+                    color: var(--vscode-input-placeholderForeground);
+                }
+                
+                .editor-actions {
+                    display: flex;
+                    justify-content: flex-end;
+                    gap: 8px;
+                }
+                
+                .editor-actions .save-btn {
+                    background-color: var(--vscode-button-background);
+                    color: var(--vscode-button-foreground);
+                    border: none;
+                    border-radius: 4px;
+                    padding: 6px 16px;
+                    cursor: pointer;
+                    font-size: 0.9em;
+                    font-weight: 500;
+                }
+                
+                .editor-actions .save-btn:hover {
+                    background-color: var(--vscode-button-hoverBackground);
+                }
+                
+                .editor-actions .cancel-btn {
+                    background-color: var(--vscode-button-secondaryBackground);
+                    color: var(--vscode-button-secondaryForeground);
+                    border: none;
+                    border-radius: 4px;
+                    padding: 6px 16px;
+                    cursor: pointer;
+                    font-size: 0.9em;
+                }
+                
+                .editor-actions .cancel-btn:hover {
+                    background-color: var(--vscode-button-secondaryHoverBackground);
+                }
+                
                 .no-comments {
                     text-align: center;
                     color: var(--vscode-descriptionForeground);
@@ -741,9 +940,11 @@ function createSidebarHTML(): string {
             </style>
         </head>
         <body>
-            <div class="keybinding-info">
-                To add a comment, press <span class="keybinding">${process.platform === 'darwin' ? '⌥+C' : 'Alt+C'}</span>
-            </div>
+            ${showHint ? `<div class="keybinding-info">
+                <button class="dismiss-hint" onclick="dismissHint()" title="Don't show again">×</button>
+                To add a comment, press <span class="keybinding">${process.platform === 'darwin' ? '⌥+C' : 'Alt+C'}</span> or select text and <strong>right-click</strong>
+            </div>` : ''}
+            ${editorHTML}
             <div class="search-container">
                 <input type="text" id="searchInput" placeholder="Search comments..." class="search-input">
                 <button id="clearSearch" class="clear-button" title="Clear search">×</button>
@@ -782,6 +983,33 @@ function createSidebarHTML(): string {
                         command: 'delete',
                         commentId: commentId,
                         fileName: fileName
+                    });
+                }
+                
+                function dismissHint() {
+                    vscode.postMessage({
+                        command: 'dismissHint'
+                    });
+                    const hint = document.querySelector('.keybinding-info');
+                    if (hint) {
+                        hint.style.display = 'none';
+                    }
+                }
+                
+                function saveComment() {
+                    const textarea = document.getElementById('commentText');
+                    if (textarea) {
+                        const text = textarea.value;
+                        vscode.postMessage({
+                            command: 'saveComment',
+                            text: text
+                        });
+                    }
+                }
+                
+                function cancelComment() {
+                    vscode.postMessage({
+                        command: 'cancelComment'
                     });
                 }
                 
@@ -875,6 +1103,7 @@ function createSidebarHTML(): string {
                 document.addEventListener('DOMContentLoaded', function() {
                     const searchInput = document.getElementById('searchInput');
                     const clearButton = document.getElementById('clearSearch');
+                    const commentTextarea = document.getElementById('commentText');
                     
                     if (searchInput) {
                         searchInput.addEventListener('input', searchComments);
@@ -888,6 +1117,26 @@ function createSidebarHTML(): string {
                     if (clearButton) {
                         clearButton.addEventListener('click', clearSearch);
                     }
+                    
+                    // Comment editor functionality
+                    if (commentTextarea) {
+                        // Auto-focus the textarea
+                        commentTextarea.focus();
+                        
+                        // Keyboard shortcuts
+                        commentTextarea.addEventListener('keydown', function(e) {
+                            // Ctrl+Enter or Cmd+Enter to save
+                            if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+                                e.preventDefault();
+                                saveComment();
+                            }
+                            // Escape to cancel
+                            if (e.key === 'Escape') {
+                                e.preventDefault();
+                                cancelComment();
+                            }
+                        });
+                    }
                 });
             </script>
         </body>
@@ -897,7 +1146,8 @@ function createSidebarHTML(): string {
 
 function refreshSidebar() {
     if (sidebarWebview) {
-        sidebarWebview.webview.html = createSidebarHTML();
+        const showHint = !extensionContext?.globalState.get<boolean>('hintDismissed', false);
+        sidebarWebview.webview.html = createSidebarHTML(showHint);
     }
     commentsTreeDataProvider.refresh();
 }
@@ -926,35 +1176,21 @@ async function editCommentById(commentId: string, fileName: string) {
         return;
     }
     
-    const newText = await vscode.window.showInputBox({
-        value: comment.text,
-        prompt: 'Edit comment',
-        placeHolder: 'Enter comment text'
-    });
+    pendingComment = {
+        fileName,
+        range: {
+            startLine: comment.range.startLine,
+            startCharacter: comment.range.startCharacter,
+            endLine: comment.range.endLine,
+            endCharacter: comment.range.endCharacter,
+            selectedText: comment.range.selectedText
+        },
+        existingCommentId: comment.id,
+        existingText: comment.text
+    };
     
-    if (newText !== undefined) {
-        if (newText.trim() === '') {
-            // Delete if empty
-            const index = fileComments.findIndex(c => c.id === commentId);
-            if (index !== -1) {
-                fileComments.splice(index, 1);
-                if (fileComments.length === 0) {
-                    delete commentData[fileName];
-                }
-            }
-        } else {
-            comment.text = newText;
-        }
-        
-        updateDecorations();
-        const config = vscode.workspace.getConfiguration('localComments');
-        const autoSave = config.get<boolean>('autoSave', true);
-        if (autoSave) {
-            saveComments();
-        }
-        
-        refreshSidebar();
-    }
+    refreshSidebar();
+    vscode.commands.executeCommand('localComments.focus');
 }
 
 async function editCommentFromTree(item: CommentTreeItem) {
@@ -1035,7 +1271,10 @@ function onConfigurationChanged() {
 class CommentsWebviewViewProvider implements vscode.WebviewViewProvider {
     public static readonly viewType = 'localComments';
 
-    constructor(private readonly _extensionUri: vscode.Uri) { }
+    constructor(
+        private readonly _extensionUri: vscode.Uri,
+        private readonly _context: vscode.ExtensionContext
+    ) { }
 
     public resolveWebviewView(
         webviewView: vscode.WebviewView,
@@ -1049,7 +1288,8 @@ class CommentsWebviewViewProvider implements vscode.WebviewViewProvider {
             localResourceRoots: [this._extensionUri]
         };
 
-        webviewView.webview.html = createSidebarHTML();
+        const showHint = !this._context.globalState.get<boolean>('hintDismissed', false);
+        webviewView.webview.html = createSidebarHTML(showHint);
 
         // Handle messages from webview
         webviewView.webview.onDidReceiveMessage(async message => {
@@ -1063,17 +1303,59 @@ class CommentsWebviewViewProvider implements vscode.WebviewViewProvider {
                 case 'delete':
                     await deleteCommentById(message.commentId, message.fileName);
                     break;
+                case 'dismissHint':
+                    await this._context.globalState.update('hintDismissed', true);
+                    break;
+                case 'saveComment':
+                    savePendingComment(message.text);
+                    break;
+                case 'cancelComment':
+                    cancelPendingComment();
+                    break;
             }
         });
     }
 }
 
+class AddCommentCodeActionProvider implements vscode.CodeActionProvider {
+    public static readonly providedCodeActionKinds = [
+        vscode.CodeActionKind.QuickFix
+    ];
+
+    provideCodeActions(
+        document: vscode.TextDocument,
+        range: vscode.Range | vscode.Selection,
+        _context: vscode.CodeActionContext,
+        _token: vscode.CancellationToken
+    ): vscode.ProviderResult<(vscode.CodeAction | vscode.Command)[]> {
+        const action = new vscode.CodeAction(
+            'Add Local Comment',
+            vscode.CodeActionKind.QuickFix
+        );
+        action.command = {
+            command: 'local-comments.openCommentInput',
+            title: 'Add Local Comment'
+        };
+        return [action];
+    }
+}
+
 export function activate(context: vscode.ExtensionContext) {
+    extensionContext = context;
     // Register webview view provider
-    const provider = new CommentsWebviewViewProvider(context.extensionUri);
+    const provider = new CommentsWebviewViewProvider(context.extensionUri, context);
     context.subscriptions.push(
         vscode.window.registerWebviewViewProvider(CommentsWebviewViewProvider.viewType, provider)
     );
+    
+    // Register code action provider for quick-fix menu
+    const codeActionProvider = vscode.languages.registerCodeActionsProvider(
+        { scheme: 'file' },
+        new AddCommentCodeActionProvider(),
+        { providedCodeActionKinds: AddCommentCodeActionProvider.providedCodeActionKinds }
+    );
+    context.subscriptions.push(codeActionProvider);
+    
     context.subscriptions.push(decorationType);
     context.subscriptions.push(disposable);
     context.subscriptions.push(saveDisposable);

@@ -7,7 +7,7 @@
   },
   "publisher": "marcel-rsoub",
   "description": "Store comments on code locally instead of in the repo.",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "license": "MIT",
   "engines": {
     "vscode": "^1.77.0"
@@ -155,10 +155,17 @@
     "viewsWelcome": [
       {
         "view": "localComments",
-        "contents": "No comments found in this workspace.\n\nTo add a comment, press Alt+C (⌥+C on Mac) while in an editor.\n\n[Add Comment](command:local-comments.openCommentInput)\n\n[Open Settings](command:local-comments.openSettings)"
+        "contents": "No comments found in this workspace.\n\nTo add a comment, press Alt+C (⌥+C on Mac) or select text and right-click.\n\n[Add Comment](command:local-comments.openCommentInput)\n\n[Open Settings](command:local-comments.openSettings)"
       }
     ],
     "menus": {
+      "editor/context": [
+        {
+          "command": "local-comments.openCommentInput",
+          "when": "editorTextFocus",
+          "group": "1_modification"
+        }
+      ],
       "view/title": [
         {
           "command": "local-comments.refreshComments",

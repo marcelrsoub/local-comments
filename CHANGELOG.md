@@ -5,10 +5,24 @@ All notable changes to the Local Comments extension will be documented in this f
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.1.0] - 2026-02-25
 
 ### Added
-- **Skip Delete Confirmation**: New `confirmDelete` setting to bypass the confirmation dialog when deleting comments (default: enabled)
+- **Quick-Fix Menu**: Add comments via the light bulb menu (Ctrl+. or ⌘+.)
+- **Right-Click Context Menu**: Add comments from the editor context menu
+- **Multi-line Comment Editor**: New webview-based editor with full textarea support
+- **Dismissable Hint Banner**: Click × to hide the "To add a comment" hint permanently
+- **Keyboard Shortcuts in Editor**: Ctrl+Enter/⌘+Enter to save, Escape to cancel
+- **Skip Delete Confirmation**: New `confirmDelete` setting to bypass the confirmation dialog when deleting comments (default: enabled) (@rlebel12)
+
+### Changed
+- **Comment Editor UI**: Replaced single-line input box with rich multi-line editor in sidebar
+- **Edit Comment Flow**: Editing existing comments now uses the same webview editor
+- **Hint Text**: Updated to mention right-click option for selected text
+
+### Fixed
+- **Navigation/Edit/Delete on Windows**: Fixed broken click handlers due to unescaped backslashes in file paths
+- **Multi-line Comment Display**: Comments with line breaks now display correctly in the sidebar
 
 ## [1.0.0] - 2025-08-20
 
