@@ -31,6 +31,7 @@ interface PendingComment {
 
 const commentData: CommentData = {};
 let pendingComment: PendingComment | undefined = undefined;
+let commentFileWatchPath: string | undefined = undefined;
 
 function getCommentFilePath(): string {
     const config = vscode.workspace.getConfiguration('localComments');
@@ -58,22 +59,30 @@ function getCommentFilePath(): string {
     }
 }
 
+function clearCommentData() {
+    for (const key of Object.keys(commentData)) {
+        delete commentData[key];
+    }
+}
+
 function loadComments() {
     const commentFilePath = getCommentFilePath();
+    const nextCommentData: CommentData = {};
+
     if (fs.existsSync(commentFilePath)) {
-        const fileData = fs.readFileSync(commentFilePath, 'utf-8');
         try {
+            const fileData = fs.readFileSync(commentFilePath, 'utf-8');
             const parsedData = JSON.parse(fileData);
             
             // Handle backward compatibility with old format
             for (const [fileName, fileComments] of Object.entries(parsedData)) {
                 if (Array.isArray(fileComments)) {
                     // New format - array of Comment objects
-                    commentData[fileName] = fileComments as Comment[];
+                    nextCommentData[fileName] = fileComments as Comment[];
                 } else {
                     // Old format - object with line numbers as keys
                     const oldComments = fileComments as { [lineNumber: number]: string };
-                    commentData[fileName] = [];
+                    nextCommentData[fileName] = [];
                     
                     for (const [lineNumberStr, commentText] of Object.entries(oldComments)) {
                         const lineNumber = parseInt(lineNumberStr) - 1; // Convert to 0-based
@@ -89,14 +98,53 @@ function loadComments() {
                                 // Don't set selectedText for migrated line comments
                             }
                         };
-                        commentData[fileName].push(newComment);
+                        nextCommentData[fileName].push(newComment);
                     }
                 }
             }
+
+            clearCommentData();
+            Object.assign(commentData, nextCommentData);
         } catch (err) {
             console.error('❌ Failed to parse comments file:', err);
+            clearCommentData();
         }
+    } else {
+        clearCommentData();
     }
+}
+
+function reloadCommentsFromDisk() {
+    loadComments();
+    updateDecorations();
+    refreshSidebar();
+}
+
+function stopWatchingCommentsFile() {
+    if (commentFileWatchPath) {
+        fs.unwatchFile(commentFileWatchPath, handleCommentFileChange);
+        commentFileWatchPath = undefined;
+    }
+}
+
+function startWatchingCommentsFile() {
+    const commentFilePath = getCommentFilePath();
+
+    if (commentFileWatchPath === commentFilePath) {
+        return;
+    }
+
+    stopWatchingCommentsFile();
+    commentFileWatchPath = commentFilePath;
+    fs.watchFile(commentFilePath, { interval: 1000 }, handleCommentFileChange);
+}
+
+function handleCommentFileChange(curr: fs.Stats, prev: fs.Stats) {
+    if (curr.mtimeMs === prev.mtimeMs && curr.size === prev.size) {
+        return;
+    }
+
+    reloadCommentsFromDisk();
 }
 
 function createBackupIfEnabled(filePath: string) {
@@ -138,6 +186,7 @@ function saveComments() {
 }
 
 loadComments();
+startWatchingCommentsFile();
 
 function createDecorationType(): vscode.TextEditorDecorationType {
     const config = vscode.workspace.getConfiguration('localComments');
@@ -489,6 +538,7 @@ let sidebarWebview: vscode.WebviewView | undefined = undefined;
 let extensionContext: vscode.ExtensionContext | undefined = undefined;
 
 function createSidebarHTML(showHint: boolean = true): string {
+    const extensionVersion = extensionContext?.extension.packageJSON?.version ?? 'dev';
     const allComments: Array<{fileName: string, comment: Comment}> = [];
     
     // Collect all comments from all files
@@ -937,6 +987,16 @@ function createSidebarHTML(showHint: boolean = true): string {
                     font-style: italic;
                     padding: 20px;
                 }
+
+                .sidebar-footer {
+                    margin-top: 12px;
+                    padding-top: 8px;
+                    border-top: 1px solid var(--vscode-panel-border);
+                    color: var(--vscode-descriptionForeground);
+                    font-size: 0.8em;
+                    text-align: center;
+                    opacity: 0.85;
+                }
             </style>
         </head>
         <body>
@@ -955,6 +1015,7 @@ function createSidebarHTML(showHint: boolean = true): string {
                     commentsHTML
                 }
             </div>
+            <div class="sidebar-footer">v${extensionVersion}</div>
             
             <script>
                 const vscode = acquireVsCodeApi();
@@ -1242,7 +1303,7 @@ const sidebarDisposable = vscode.commands.registerCommand('local-comments.openSi
 const navigateDisposable = vscode.commands.registerCommand('local-comments.navigateToComment', navigateToComment);
 const editTreeDisposable = vscode.commands.registerCommand('local-comments.editComment', editCommentFromTree);
 const deleteTreeDisposable = vscode.commands.registerCommand('local-comments.deleteComment', deleteCommentFromTree);
-const refreshDisposable = vscode.commands.registerCommand('local-comments.refreshComments', () => refreshSidebar());
+const refreshDisposable = vscode.commands.registerCommand('local-comments.refreshComments', () => reloadCommentsFromDisk());
 
 vscode.window.onDidChangeVisibleTextEditors(updateDecorations);
 
@@ -1254,7 +1315,8 @@ updateDecorations();
 
 function onConfigurationChanged() {
     // Reload comments from potentially new location
-    loadComments();
+    reloadCommentsFromDisk();
+    startWatchingCommentsFile();
     
     // Update decoration type with new highlight color
     decorationType.dispose();
@@ -1379,4 +1441,14 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(configChangeDisposable);
 }
 
-export function deactivate() { }
+export function deactivate() {
+    stopWatchingCommentsFile();
+}
+
+export function testReloadCommentsFromDisk() {
+    reloadCommentsFromDisk();
+}
+
+export function testGetCommentData(): CommentData {
+    return JSON.parse(JSON.stringify(commentData));
+}
