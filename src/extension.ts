@@ -107,6 +107,7 @@ function loadComments() {
             Object.assign(commentData, nextCommentData);
         } catch (err) {
             console.error('❌ Failed to parse comments file:', err);
+            clearCommentData();
         }
     } else {
         clearCommentData();
@@ -537,6 +538,7 @@ let sidebarWebview: vscode.WebviewView | undefined = undefined;
 let extensionContext: vscode.ExtensionContext | undefined = undefined;
 
 function createSidebarHTML(showHint: boolean = true): string {
+    const extensionVersion = extensionContext?.extension.packageJSON?.version ?? 'dev';
     const allComments: Array<{fileName: string, comment: Comment}> = [];
     
     // Collect all comments from all files
@@ -985,6 +987,16 @@ function createSidebarHTML(showHint: boolean = true): string {
                     font-style: italic;
                     padding: 20px;
                 }
+
+                .sidebar-footer {
+                    margin-top: 12px;
+                    padding-top: 8px;
+                    border-top: 1px solid var(--vscode-panel-border);
+                    color: var(--vscode-descriptionForeground);
+                    font-size: 0.8em;
+                    text-align: center;
+                    opacity: 0.85;
+                }
             </style>
         </head>
         <body>
@@ -1003,6 +1015,7 @@ function createSidebarHTML(showHint: boolean = true): string {
                     commentsHTML
                 }
             </div>
+            <div class="sidebar-footer">v${extensionVersion}</div>
             
             <script>
                 const vscode = acquireVsCodeApi();

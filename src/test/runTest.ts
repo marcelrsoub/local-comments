@@ -12,10 +12,12 @@ async function main() {
 		// Passed to --extensionTestsPath
 		const extensionTestsPath = path.resolve(__dirname, './suite/index');
 
-		// Use the local VS Code install so the test host does not need to download a fresh build.
-		const vscodeExecutablePath = path.join('/Applications/Visual Studio Code.app', 'Contents', 'MacOS', 'Code');
+		const vscodeExecutablePath = process.env.VSCODE_EXECUTABLE_PATH;
+		const runOptions = vscodeExecutablePath
+			? { extensionDevelopmentPath, extensionTestsPath, vscodeExecutablePath }
+			: { extensionDevelopmentPath, extensionTestsPath };
 
-		await runTests({ extensionDevelopmentPath, extensionTestsPath, vscodeExecutablePath });
+		await runTests(runOptions);
 	} catch (err) {
 		console.error('Failed to run tests', err);
 		process.exit(1);
