@@ -1431,3 +1431,11 @@ export function activate(context: vscode.ExtensionContext) {
 export function deactivate() {
     stopWatchingCommentsFile();
 }
+
+export function testReloadCommentsFromDisk() {
+    reloadCommentsFromDisk();
+}
+
+export function testGetCommentData(): CommentData {
+    return JSON.parse(JSON.stringify(commentData));
+}
